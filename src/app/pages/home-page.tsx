@@ -286,7 +286,7 @@ export function HomePage() {
                   <Button 
                     variant="outline" 
                     size="sm"
-                    className="group h-8 border-neutral-200 bg-white/80 backdrop-blur-sm text-xs sm:text-sm transition-all hover:border-blue-300 hover:bg-blue-50/50 hover:shadow-sm"
+                    className="group h-8 border-neutral-200 bg-white/80 backdrop-blur-sm text-neutral-700 text-xs sm:text-sm transition-all hover:border-neutral-300 hover:bg-neutral-100 hover:shadow-sm active:bg-neutral-200 active:border-neutral-400"
                   >
                     <Upload className="mr-2 size-4 transition-transform group-hover:scale-110" />
                     上传文件
