@@ -1,0 +1,46 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-ssr/
+*.local
+
+# 日志与调试
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 环境变量（含敏感信息）
+.env
+.env.local
+.env.*.local
+
+# 编辑器 / IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 缓存与临时
+.cache/
+*.tsbuildinfo
+.turbo
+
+# 测试覆盖率
+coverage/
+
+# pnpm
+.pnpm-store/
+.pnpm-debug.log
+
+# 可选：锁定文件（若希望不提交可取消注释）
+# pnpm-lock.yaml
+# package-lock.json
+# yarn.lock
