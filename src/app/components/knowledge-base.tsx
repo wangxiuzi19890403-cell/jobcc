@@ -40,9 +40,11 @@ interface KnowledgeBaseProps {
   onFileSelect?: (file: FileNode) => void;
   selectedFiles?: Set<string>;
   onSelectionChange?: (files: Set<string>) => void;
+  /** 工作台内使用时传入，点击「收起」会关闭知识库侧栏，不影响 Logo 返回首页 */
+  onClosePanel?: () => void;
 }
 
-export function KnowledgeBase({ files, onFilesChange, onFileSelect, selectedFiles, onSelectionChange }: KnowledgeBaseProps) {
+export function KnowledgeBase({ files, onFilesChange, onFileSelect, selectedFiles, onSelectionChange, onClosePanel }: KnowledgeBaseProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["folder-1"]));
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -333,53 +335,82 @@ export function KnowledgeBase({ files, onFilesChange, onFileSelect, selectedFile
       "flex h-full flex-col transition-all duration-300",
       collapsed ? "w-12" : "w-full"
     )}>
-      {/* Header */}
+      {/* Header：Logo 仅返回首页，知识库标题+箭头 仅收起/展开，互不干扰 */}
       <div className={cn(
         "shrink-0 border-b p-4",
-        collapsed ? "space-y-0" : "space-y-3"
+        collapsed && !onClosePanel ? "space-y-0" : "space-y-3"
       )}>
         <div className="flex items-center justify-between gap-2">
-          {!collapsed && (
+          {(!collapsed || onClosePanel) && (
             <>
               <Link
                 to="/"
-                className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+                className="flex shrink-0 items-center gap-2 rounded-md transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
+                title="返回首页"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 text-base text-white shrink-0">
+                  🤖
+                </div>
+                {(!collapsed || onClosePanel) && (
+                  <span className="font-semibold text-neutral-900 truncate">Jobcc</span>
+                )}
+              </Link>
+              {!collapsed && (
+                <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="font-medium text-neutral-900">知识库</h3>
+                  <p className="text-xs text-neutral-500">参考文献与资料</p>
+                </div>
+              )}
+              {onClosePanel ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClosePanel(); }}
+                  className="shrink-0 rounded-lg"
+                  title="收起知识库"
+                  aria-label="收起知识库"
+                >
+                  <ChevronDown className="size-4 rotate-[-90deg]" />
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCollapsed(!collapsed)}
+                  className={collapsed ? "mx-auto" : ""}
+                >
+                  {collapsed ? (
+                    <ChevronRight className="size-4" />
+                  ) : (
+                    <ChevronDown className="size-4 rotate-[-90deg]" />
+                  )}
+                </Button>
+              )}
+            </>
+          )}
+          {collapsed && !onClosePanel && (
+            <>
+              <Link
+                to="/"
+                className="flex shrink-0 items-center justify-center rounded-md transition-opacity hover:opacity-80"
                 title="返回首页"
               >
                 <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 text-base text-white">
                   🤖
                 </div>
-                <span className="font-semibold text-neutral-900">Jobcc</span>
               </Link>
-              <div className="min-w-0 flex-1">
-                <h3 className="font-medium text-neutral-900">知识库</h3>
-                <p className="text-xs text-neutral-500">参考文献与资料</p>
-              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setCollapsed(false)}
+                className="mx-auto shrink-0"
+                title="展开知识库"
+              >
+                <ChevronRight className="size-4" />
+              </Button>
             </>
           )}
-          {collapsed && (
-            <Link
-              to="/"
-              className="flex shrink-0 items-center justify-center transition-opacity hover:opacity-80"
-              title="返回首页"
-            >
-              <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 text-base text-white">
-                🤖
-              </div>
-            </Link>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setCollapsed(!collapsed)}
-            className={collapsed ? "mx-auto" : ""}
-          >
-            {collapsed ? (
-              <ChevronRight className="size-4" />
-            ) : (
-              <ChevronDown className="size-4 rotate-[-90deg]" />
-            )}
-          </Button>
         </div>
 
         {/* Search */}

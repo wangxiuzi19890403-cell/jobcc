@@ -5,11 +5,13 @@ import {
   TalentMarketPage
 } from "./pages";
 import { RootLayout } from "./components/root-layout";
+import { ErrorPage } from "./components/error-page";
 
 export const router = createBrowserRouter([
   {
     path: "/",
     Component: RootLayout,
+    errorElement: <ErrorPage />,
     children: [
       { index: true, Component: HomePage },
       { path: "workspace/:projectId?", Component: WorkspacePage },
