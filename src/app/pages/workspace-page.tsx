@@ -307,6 +307,26 @@ export function WorkspacePage() {
     return () => clearTimeout(t);
   }, [hasAssistantPlanMessage]);
 
+  /** 团队确认弹窗：仅用户确认（或 10s 自动确认）后才展示下方 3 张等待卡片 */
+  const [teamConfirmed, setTeamConfirmed] = useState(false);
+  const [teamConfirmDismissed, setTeamConfirmDismissed] = useState(false);
+  const [teamConfirmCountdown, setTeamConfirmCountdown] = useState(10);
+  const teamConfirmOpen = showSubagentsPlan && !teamConfirmed && !teamConfirmDismissed;
+  useEffect(() => {
+    if (!teamConfirmOpen) return;
+    setTeamConfirmCountdown(10);
+    const interval = setInterval(() => {
+      setTeamConfirmCountdown((c) => {
+        if (c <= 1) {
+          setTeamConfirmed(true);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [teamConfirmOpen]);
+
   // Mock data；仅从首页「发布任务」进入新任务页时用空状态+收起侧栏，从别的项目切到 workspace 保持不变
   const team = mockTeams[0];
   const [workingAgents, setWorkingAgents] = useState<WorkingAgent[]>(() =>
@@ -505,6 +525,7 @@ export function WorkspacePage() {
   };
 
   return (
+    <>
     <div className="flex h-full relative">
       {/* 左侧边栏：知识库，与右侧统一的展开/收起，收起后仅保留图标 */}
       <div
@@ -976,8 +997,8 @@ export function WorkspacePage() {
                   </div>
                 );
               })}
-              {/* 等待中阶段：堆叠效果，第一张为数据分析师完整卡片，后两张露一角；点击展开后两张 */}
-              {(() => {
+              {/* 等待中阶段：仅团队确认（或 10s 自动确认）后才展示；堆叠效果，第一张完整卡片，后两张露一角 */}
+              {teamConfirmed && (() => {
                 const waitingList = workingAgents.filter((wa) => wa.status === "waiting");
                 if (waitingList.length === 0) return null;
                 return <WaitingStackCollapsible waitingList={waitingList} />;
@@ -985,6 +1006,33 @@ export function WorkspacePage() {
             </div>
           )}
         </ScrollArea>
+
+        {/* 团队确认提示：在输入框上方，确认或 10s 自动执行后才展示下方 3 张等待卡片 */}
+        {teamConfirmOpen && (
+          <div className="border-t border-neutral-200 bg-sky-50/80 px-4 py-3">
+            <div className="rounded-xl border border-sky-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-neutral-900 mb-3">是否确认此团队开始任务？</h3>
+              <div className="space-y-2 text-sm text-neutral-600 mb-4">
+                <p><span className="font-medium text-neutral-800">团队名称：</span>{team.name}</p>
+                <p><span className="font-medium text-neutral-800">成员构成：</span>translator、Storyboard Planner、Image Generator</p>
+                <p><span className="font-medium text-neutral-800">核心能力：</span>翻译、分镜规划、图片生成</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-neutral-500">
+                  {teamConfirmCountdown > 0 ? `${teamConfirmCountdown} 秒后自动执行` : "正在执行…"}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setTeamConfirmDismissed(true)}>
+                    取消
+                  </Button>
+                  <Button size="sm" onClick={() => setTeamConfirmed(true)}>
+                    确认开始
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Input Area */}
         <div className="border-t bg-white p-4">
@@ -1650,5 +1698,6 @@ export function WorkspacePage() {
       </div>
 
     </div>
+    </>
   );
 }
