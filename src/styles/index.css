@@ -1,3 +1,32 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+/* 子代理规划前的「正在思考」动效：三点波浪（备用） */
+@keyframes thinking-dot {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.animate-thinking-dot {
+  animation: thinking-dot 0.7s ease-in-out infinite;
+}
+.animate-thinking-dot-delay-1 { animation-delay: 0.15s; }
+.animate-thinking-dot-delay-2 { animation-delay: 0.3s; }
+
+/* 助手头像轮播筛选：选择框在 3 个位置间循环（槽位 40px，间距 8px） */
+@keyframes subagents-carousel-select {
+  0%, 100% { transform: translateX(0); }
+  33% { transform: translateX(48px); }
+  66% { transform: translateX(96px); }
+}
+.subagents-carousel-selector {
+  animation: subagents-carousel-select 2.4s ease-in-out infinite;
+}
+/* 主头像「在思考」的轻微呼吸感 */
+@keyframes avatar-thinking-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.03); filter: brightness(1.08); }
+}
+.animate-avatar-thinking {
+  animation: avatar-thinking-pulse 2s ease-in-out infinite;
+}

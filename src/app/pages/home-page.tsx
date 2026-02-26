@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { Team } from "../types";
 import { Button } from "../components/ui/button";
@@ -48,6 +49,7 @@ import {
   RefreshCw,
   Copy,
   Trash2,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -243,6 +245,9 @@ export function HomePage() {
   const [teamToDelete, setTeamToDelete] = useState<{ id: string; name: string } | null>(null);
   const [taskInput, setTaskInput] = useState("");
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
+  const [teamPopoverOpen, setTeamPopoverOpen] = useState(false);
+  const [teamPanelPos, setTeamPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const teamTriggerRef = useRef<HTMLButtonElement>(null);
   const [cursorPosition, setCursorPosition] = useState<number | null>(null);
   const [editTeamDialogOpen, setEditTeamDialogOpen] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -258,10 +263,12 @@ export function HomePage() {
 
   const handleSubmitTask = () => {
     if (taskInput.trim()) {
+      const description = taskInput.trim();
       toast.success("AI项目经理正在分析您的需求...");
-      setTimeout(() => {
-        navigate("/workspace/new");
-      }, 1000);
+      navigate("/workspace/new", {
+        state: { taskDescription: description },
+        replace: false,
+      });
     }
   };
 
@@ -439,15 +446,73 @@ export function HomePage() {
                     <Upload className="mr-2 size-4 transition-transform group-hover:scale-110" />
                     上传文件
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={handleOpenTeamDialog}
-                    className="group h-8 border-neutral-200 bg-white/80 backdrop-blur-sm text-xs sm:text-sm transition-all hover:border-purple-300 hover:bg-purple-50/50 hover:shadow-sm"
-                  >
-                    <Users className="mr-2 size-4 transition-transform group-hover:scale-110" />
-                    呼叫团队
-                  </Button>
+                  <span ref={teamTriggerRef} className="inline-block">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        const el = teamTriggerRef.current;
+                        if (el) {
+                          const rect = el.getBoundingClientRect();
+                          setTeamPanelPos({ top: rect.bottom, left: rect.left, width: rect.width });
+                          setTeamPopoverOpen(true);
+                        }
+                      }}
+                      className="group h-8 border-neutral-200 bg-white/80 backdrop-blur-sm text-xs sm:text-sm transition-all hover:border-purple-300 hover:bg-purple-50/50 hover:shadow-sm"
+                    >
+                      <Users className="mr-2 size-4 transition-transform group-hover:scale-110" />
+                      呼叫团队
+                    </Button>
+                  </span>
+                  {typeof document !== "undefined" &&
+                    teamPopoverOpen &&
+                    teamPanelPos &&
+                    createPortal(
+                      <div className="fixed inset-0 z-[200]" aria-hidden="true">
+                        <div
+                          className="absolute inset-0 bg-black/20"
+                          onClick={() => {
+                            setTeamPopoverOpen(false);
+                            setTeamPanelPos(null);
+                          }}
+                        />
+                        <div
+                          className="absolute z-[210] min-w-[200px] max-w-[280px] rounded-xl border border-neutral-200/80 bg-white py-1.5 shadow-xl"
+                          style={{
+                            top: teamPanelPos.top + 6,
+                            left: teamPanelPos.left,
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="px-2.5 py-1.5">
+                            <p className="text-xs font-medium text-neutral-500">选择团队</p>
+                          </div>
+                          <div className="max-h-[min(280px,50vh)] overflow-y-auto overflow-x-hidden overscroll-contain">
+                            {teams.map((team) => {
+                              const TeamIcon = team.icon;
+                              return (
+                                <button
+                                  key={team.id}
+                                  type="button"
+                                  className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 transition-colors hover:bg-violet-200 hover:text-white focus:outline-none focus:ring-0"
+                                  onClick={() => {
+                                    handleSelectTeam(team);
+                                    setTeamPopoverOpen(false);
+                                    setTeamPanelPos(null);
+                                  }}
+                                >
+                                  <div className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${team.iconBg} text-white`}>
+                                    <TeamIcon className="size-4" />
+                                  </div>
+                                  <span className="min-w-0 truncate font-medium">{team.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
                 </div>
 
                 {/* 右侧发布按钮 */}

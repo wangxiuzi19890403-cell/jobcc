@@ -1,6 +1,6 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useParams } from "react-router";
+import { useParams, useLocation } from "react-router";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
@@ -27,6 +27,12 @@ import {
   Check,
   History,
   PlusCircle,
+  FileX,
+  ListChecks,
+  Play,
+  Circle,
+  User,
+  Bot,
 } from "lucide-react";
 import { mockAgents, mockTeams } from "../data/mock-data";
 import { mockKnowledgeBase } from "../data/mock-knowledge-base";
@@ -34,8 +40,19 @@ import { Message, Agent } from "../types";
 import { FileNode } from "../types/knowledge-base";
 import { KnowledgeBase } from "../components/knowledge-base";
 import { UserInterventionCard } from "../components/user-intervention-card";
+import { CartoonAvatar } from "../components/cartoon-avatar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { Github } from "lucide-react";
 import { toast } from "sonner";
+
+/** 对话模块：用户/助手气泡消息 */
+export interface DialogueMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  thinkingSummary?: string[];
+  steps?: string[];
+}
 
 const mockHistoryTasks = [
   { id: "h1", title: "Q3 竞品财报深度分析", time: "2024-02-20 14:30", status: "已完成" },
@@ -50,20 +67,250 @@ interface WorkingAgent {
   messages: Message[];
 }
 
+/** 新任务页空状态：无执行过程，仅展示「想给团队下什么任务」 */
+function getEmptyWorkingAgents(): WorkingAgent[] {
+  return [
+    { agent: mockAgents[0], status: "waiting", messages: [] },
+    { agent: mockAgents[1], status: "waiting", messages: [] },
+    { agent: mockAgents[6], status: "waiting", messages: [] },
+  ];
+}
+
+const WAITING_CARD_PEEK = 28; // 后两张卡片露出的宽度（px）
+
+/** 单张等待中卡片的简要条（叠放时后两张露出的部分用） */
+function WaitingCardStrip({ name }: { name: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50/95 px-4 py-3">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-orange-100">
+        <Clock className="size-4 text-orange-600" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <h4 className="font-medium text-sm text-neutral-900">{name} - 等待中</h4>
+        <p className="text-xs text-neutral-500">预计 5 分钟后</p>
+      </div>
+    </div>
+  );
+}
+
+/** 单张等待中卡片的完整内容（第一张用）；仅多张时显示展开按钮 */
+function WaitingCardFull({
+  name,
+  onExpand,
+  expandLabel,
+  isOpen,
+  showExpandButton = true,
+}: {
+  name: string;
+  onExpand?: () => void;
+  expandLabel?: string;
+  isOpen?: boolean;
+  showExpandButton?: boolean;
+}) {
+  return (
+    <div className="flex flex-col rounded-xl border border-orange-200 bg-white p-4 shadow-lg ring-1 ring-orange-100">
+      <div className="flex items-start gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-orange-100">
+          <Clock className="size-5 text-orange-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <h4 className="font-medium text-sm text-neutral-900">{name} - 等待中</h4>
+            <Badge variant="outline" className="bg-white text-xs">
+              预计 5 分钟后
+            </Badge>
+          </div>
+          <p className="text-sm text-neutral-600 mb-3">
+            等待前序任务完成后进行质量审核和优化建议
+          </p>
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-neutral-700 mb-1">预计工作内容：</div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs text-neutral-600">
+                <div className="size-1.5 rounded-full bg-orange-400" />
+                <span>审核文案质量与准确性</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-neutral-600">
+                <div className="size-1.5 rounded-full bg-orange-400" />
+                <span>检查数据引用的正确性</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-neutral-600">
+                <div className="size-1.5 rounded-full bg-orange-400" />
+                <span>提供优化建议和修改意见</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {showExpandButton && onExpand && expandLabel !== undefined && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onExpand();
+          }}
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50/80 py-2 text-xs text-orange-700 transition-colors hover:bg-orange-100"
+        >
+          {expandLabel}
+          <ChevronDown className={`size-3.5 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 等待中任务堆叠：多张时第一张在上、后两张露边+展开；仅 1 张时无堆叠、无展开按钮 */
+function WaitingStackCollapsible({ waitingList }: { waitingList: WorkingAgent[] }) {
+  const [open, setOpen] = useState(false);
+  const [first, ...rest] = waitingList;
+  const restNames = rest.map((wa) => wa.agent.name);
+  const peekPx = WAITING_CARD_PEEK;
+  const totalPeek = peekPx * 2;
+
+  // 仅 1 项：不堆叠，只显示一张完整卡片，无展开按钮
+  if (rest.length === 0) {
+    return (
+      <WaitingCardFull
+        name={first?.agent.name ?? "数据分析师"}
+        showExpandButton={false}
+      />
+    );
+  }
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div
+        className="relative"
+        style={{ paddingRight: open ? 0 : totalPeek, paddingBottom: open ? 0 : totalPeek }}
+      >
+        {/* 收起时显示：后两张从右下露出的叠层 */}
+        {!open && (
+          <>
+            <div
+              className="absolute bottom-0 right-0 z-0 rounded-xl border border-orange-200 bg-orange-50/90 shadow-md"
+              style={{ width: `calc(100% - ${totalPeek}px)`, height: 72 }}
+            >
+              <WaitingCardStrip name={restNames[1] ?? ""} />
+            </div>
+            <div
+              className="absolute z-[1] rounded-xl border border-orange-200 bg-orange-50/95 shadow-lg"
+              style={{
+                bottom: peekPx,
+                right: peekPx,
+                width: `calc(100% - ${totalPeek}px)`,
+                height: 72,
+              }}
+            >
+              <WaitingCardStrip name={restNames[0] ?? ""} />
+            </div>
+          </>
+        )}
+        {/* 第一张完整卡片 */}
+        <div className="relative z-[2]">
+          <WaitingCardFull
+            name={first?.agent.name ?? "数据分析师"}
+            onExpand={() => setOpen((o) => !o)}
+            expandLabel={open ? "收起" : `展开剩余 ${rest.length} 项`}
+            isOpen={open}
+            showExpandButton={true}
+          />
+        </div>
+      </div>
+      <CollapsibleContent>
+        <div className="mt-3 space-y-0 rounded-xl border border-orange-200 bg-orange-50/30 overflow-hidden">
+          {rest.map((wa) => (
+            <div
+              key={wa.agent.id}
+              className="flex items-start gap-3 border-t border-orange-200/70 first:border-t-0 p-4 bg-white/80"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-orange-100">
+                <Clock className="size-5 text-orange-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <h4 className="font-medium text-sm text-neutral-900">{wa.agent.name} - 等待中</h4>
+                  <Badge variant="outline" className="bg-white text-xs">
+                    预计 5 分钟后
+                  </Badge>
+                </div>
+                <p className="text-sm text-neutral-600 mb-3">
+                  等待前序任务完成后进行质量审核和优化建议
+                </p>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-neutral-700 mb-1">预计工作内容：</div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs text-neutral-600">
+                      <div className="size-1.5 rounded-full bg-orange-400" />
+                      <span>审核文案质量与准确性</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-neutral-600">
+                      <div className="size-1.5 rounded-full bg-orange-400" />
+                      <span>检查数据引用的正确性</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-neutral-600">
+                      <div className="size-1.5 rounded-full bg-orange-400" />
+                      <span>提供优化建议和修改意见</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function WorkspacePage() {
   const { projectId } = useParams();
-  const [input, setInput] = useState("");
+  const location = useLocation();
+  const initialTaskFromHome = (location.state as { taskDescription?: string } | null)?.taskDescription ?? "";
+  const isNewTaskFromHome = projectId === "new" && !!initialTaskFromHome;
+  const [input, setInput] = useState(initialTaskFromHome);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [knowledgeFiles, setKnowledgeFiles] = useState<FileNode[]>(mockKnowledgeBase);
-  const [showKnowledgeBase, setShowKnowledgeBase] = useState(true);
+  const [showKnowledgeBase, setShowKnowledgeBase] = useState(!isNewTaskFromHome);
   const [selectedKnowledgeFiles, setSelectedKnowledgeFiles] = useState<Set<string>>(new Set());
   const [historyPopoverOpen, setHistoryPopoverOpen] = useState(false);
   const [historyPanelAnchor, setHistoryPanelAnchor] = useState<{ bottom: number; right: number } | null>(null);
   const historyTriggerRef = useRef<HTMLButtonElement>(null);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(!isNewTaskFromHome);
+  const defaultTaskDescription =
+    "我要把这篇文章做成视频，请把这篇文章翻译成中文，然后生成风格统一的 100 张分镜图片，使用皮克斯的风格，设计固定的一两个角色，必要时可以用图表。";
+  const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>(() => {
+    if (!initialTaskFromHome) return [];
+    return [
+      { id: "d-user-0", role: "user", content: (initialTaskFromHome && initialTaskFromHome.trim()) ? initialTaskFromHome : defaultTaskDescription },
+      {
+        id: "d-ai-0",
+        role: "assistant",
+        content: "这里是一个团队 leader 在规划任务的过程。",
+        thinkingSummary: ["设计固定的一两个角色", "必要时使用图表"],
+        steps: [
+          "首先读取文章内容",
+          "翻译为中文",
+          "规划分镜脚本",
+          "生成 100 张图片（可能需要分批进行）",
+        ],
+      },
+    ];
+  });
 
-  // Mock data for demonstration
+  /** 子代理规划模块：先展示 10s「组建团队、筛选人选」动效，再展示卡片 */
+  const hasAssistantPlanMessage = dialogueMessages.some((m) => m.id === "d-ai-0");
+  const [showSubagentsPlan, setShowSubagentsPlan] = useState(false);
+  useEffect(() => {
+    if (!hasAssistantPlanMessage) return;
+    const t = setTimeout(() => setShowSubagentsPlan(true), 10000);
+    return () => clearTimeout(t);
+  }, [hasAssistantPlanMessage]);
+
+  // Mock data；仅从首页「发布任务」进入新任务页时用空状态+收起侧栏，从别的项目切到 workspace 保持不变
   const team = mockTeams[0];
-  const [workingAgents, setWorkingAgents] = useState<WorkingAgent[]>(([
+  const [workingAgents, setWorkingAgents] = useState<WorkingAgent[]>(() =>
+    isNewTaskFromHome ? getEmptyWorkingAgents() : ([
     {
       agent: mockAgents[0],
       status: "completed",
@@ -188,10 +435,27 @@ export function WorkspacePage() {
   };
 
   const handleSend = () => {
-    if (input.trim() && currentAgent) {
-      // Add user message
-      setInput("");
-    }
+    const text = input.trim();
+    if (!text) return;
+    const userMsg: DialogueMessage = {
+      id: `d-user-${Date.now()}`,
+      role: "user",
+      content: text,
+    };
+    const aiMsg: DialogueMessage = {
+      id: `d-ai-${Date.now()}`,
+      role: "assistant",
+      content: "这是一个复杂的任务，需要多个步骤。我会按步骤帮你完成。",
+      thinkingSummary: ["理解任务目标", "拆解执行步骤", "规划资源与顺序"],
+      steps: [
+        "首先分析任务内容与要求",
+        "制定执行计划",
+        "按计划逐步执行",
+        "汇总并交付结果",
+      ],
+    };
+    setDialogueMessages((prev) => [...prev, userMsg, aiMsg]);
+    setInput("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -242,32 +506,36 @@ export function WorkspacePage() {
 
   return (
     <div className="flex h-full relative">
-      {/* Left Sidebar - Knowledge Base (Collapsible) */}
-      {showKnowledgeBase && (
-        <div className="w-72 border-r bg-white">
-          <KnowledgeBase 
-            files={knowledgeFiles}
-            onFilesChange={setKnowledgeFiles}
-            onFileSelect={handleFileSelect}
-            selectedFiles={selectedKnowledgeFiles}
-            onSelectionChange={setSelectedKnowledgeFiles}
-            onClosePanel={() => setShowKnowledgeBase(false)}
-          />
-        </div>
-      )}
-      
-      {/* Toggle Button */}
-      <button
-        onClick={() => setShowKnowledgeBase(!showKnowledgeBase)}
-        className="absolute left-0 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-r-lg border border-l-0 bg-white shadow-sm transition-all hover:bg-neutral-50"
-        style={{ left: showKnowledgeBase ? '288px' : '0px' }}
+      {/* 左侧边栏：知识库，与右侧统一的展开/收起，收起后仅保留图标 */}
+      <div
+        data-module="workspace-knowledge-sidebar"
+        className={`flex h-full flex-shrink-0 border-r bg-white transition-[width] duration-200 ${
+          showKnowledgeBase ? "w-72" : "w-12"
+        }`}
       >
         {showKnowledgeBase ? (
-          <ChevronLeft className="size-4 text-neutral-600" />
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <KnowledgeBase
+              files={knowledgeFiles}
+              onFilesChange={setKnowledgeFiles}
+              onFileSelect={handleFileSelect}
+              selectedFiles={selectedKnowledgeFiles}
+              onSelectionChange={setSelectedKnowledgeFiles}
+              onClosePanel={() => setShowKnowledgeBase(false)}
+            />
+          </div>
         ) : (
-          <ChevronRight className="size-4 text-neutral-600" />
+          <button
+            type="button"
+            onClick={() => setShowKnowledgeBase(true)}
+            className="flex h-full w-12 flex-col items-center justify-center text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-700"
+            title="展开知识库"
+            aria-label="展开知识库"
+          >
+            <ChevronRight className="size-4" />
+          </button>
         )}
-      </button>
+      </div>
 
       {/* Main Content - Chat Area：min-h-0 使 flex 子项可收缩，对话区才能限制在视口内滚动 */}
       <div className="flex min-h-0 flex-1 flex-col">
@@ -325,10 +593,10 @@ export function WorkspacePage() {
           </div>
         )}
 
-        {/* Chat Messages - 合并三阶段对话为一条时间线，min-h-0 + overflow 保证在视口内滚动 */}
-        <ScrollArea className="min-h-0 flex-1 bg-neutral-50 p-6">
-          {mergedMessages.length === 0 ? (
-            <div className="flex min-h-full items-center justify-start px-8 pb-[12vh] pt-[22vh]">
+        {/* 对话模块：用户/助手气泡 + 合并三阶段对话时间线 */}
+        <ScrollArea data-module="workspace-chat-area" className="min-h-0 flex-1 bg-neutral-50 p-6">
+          {mergedMessages.length === 0 && dialogueMessages.length === 0 ? (
+            <div data-module="workspace-empty-state" className="flex min-h-full items-center justify-start px-8 pb-[12vh] pt-[22vh]">
               <div className="flex max-w-2xl flex-col items-start text-left">
                 <h2 className="text-2xl font-semibold leading-snug text-neutral-900 sm:text-3xl">
                   Boss，您好，
@@ -357,7 +625,163 @@ export function WorkspacePage() {
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div data-module="workspace-messages" className="space-y-4">
+              {/* 对话模块：用户 / 助手气泡（参考视频分镜页） */}
+              {dialogueMessages.map((msg) =>
+                msg.role === "user" ? (
+                  <div key={msg.id} className="flex justify-end">
+                    <div className="max-w-[85%] rounded-2xl bg-neutral-200/80 px-4 py-3 text-sm text-neutral-800">
+                      <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={msg.id} className="flex gap-3">
+                    <CartoonAvatar size={32} className="shrink-0" />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="rounded-2xl border border-neutral-200/80 bg-white px-4 py-3 text-sm text-neutral-700 shadow-sm">
+                        {msg.thinkingSummary && msg.thinkingSummary.length > 0 && (
+                          <Collapsible defaultOpen>
+                            <CollapsibleTrigger className="flex w-full items-center justify-between py-1 text-left font-medium text-neutral-700">
+                              <span className="flex flex-col items-start gap-0.5">
+                                <span>思考已完成</span>
+                                <span className="text-xs font-normal text-neutral-500">这里是任务拆解</span>
+                              </span>
+                              <ChevronDown className="size-4 shrink-0 text-neutral-500" />
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                              <ul className="mt-2 space-y-1 border-t border-neutral-100 pt-2 text-sm text-neutral-600">
+                                {msg.thinkingSummary.map((s, i) => (
+                                  <li key={i}>{s}</li>
+                                ))}
+                              </ul>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )}
+                        {msg.steps && msg.steps.length > 0 && (
+                          <div className="mt-3">
+                            <p className="mb-2 font-medium text-neutral-800">这是一个复杂的任务，需要多个步骤：</p>
+                            <ol className="list-inside list-decimal space-y-1 text-sm text-neutral-600">
+                              {msg.steps.map((s, i) => (
+                                <li key={i}>{s}</li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
+                        <p className="mt-3 border-t border-neutral-100 pt-3 text-neutral-700">{msg.content}</p>
+                      </div>
+                      {/* 任务读取模块：层级列表，参考图片样式 */}
+                      {msg.id === "d-ai-0" && (
+                        <div
+                          data-module="workspace-task-reading"
+                          className="rounded-2xl border border-neutral-200/80 bg-white px-4 py-3 shadow-sm"
+                        >
+                          <div className="space-y-0">
+                            {[
+                              { icon: FileX, text: "访问网页失败，这里是读取任务的文件", indent: false },
+                              { icon: ListChecks, text: "读取待办清单", indent: false },
+                              { icon: Circle, text: "使用 Shell 或 Python 请求网页", indent: true },
+                              { icon: Play, text: "运行终端 Download Paul Graham article", indent: false },
+                              { icon: ListChecks, text: "编写待办清单", indent: false },
+                              { icon: Circle, text: "Python 读取 HTML 并翻译", indent: true },
+                              { icon: Play, text: "运行 Python 代码", indent: false },
+                              { icon: Circle, text: "多子代理并行翻译与分镜", indent: true },
+                            ].map((item, i) => {
+                              const Icon = item.icon;
+                              return (
+                                <div
+                                  key={i}
+                                  className={`flex cursor-pointer items-center gap-3 py-2.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-50 ${item.indent ? "border-l-2 border-dashed border-neutral-200 pl-5 ml-2" : ""}`}
+                                >
+                                  <Icon
+                                    className={`shrink-0 text-neutral-400 ${item.indent ? "size-3.5" : "size-4"}`}
+                                  />
+                                  <span className="min-w-0 flex-1">{item.text}</span>
+                                  <ChevronRight className="size-4 shrink-0 text-neutral-400" />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {/* 子代理规划：前 10s 显示「组建团队、筛选人选」动效，之后展示说明+卡片 */}
+                      {msg.id === "d-ai-0" && (
+                        <>
+                          {!showSubagentsPlan ? (
+                            <div
+                              data-module="workspace-subagents-plan-thinking"
+                              className="rounded-2xl border border-neutral-200/80 bg-gradient-to-r from-sky-50/60 to-white px-4 py-4 shadow-sm ring-1 ring-neutral-100/80"
+                            >
+                              <div className="flex flex-wrap items-center gap-4">
+                                <div className="flex items-center gap-3">
+                                  <CartoonAvatar size={44} className="animate-avatar-thinking ring-2 ring-sky-200/60 ring-offset-2" />
+                                  <div>
+                                    <p className="text-sm font-medium text-neutral-800">正在组建团队，筛选人选</p>
+                                    <p className="text-xs text-neutral-500 mt-0.5">逐个评估并挑选合适的人选…</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 rounded-full bg-white/80 pl-3 pr-2 py-1.5 shadow-inner border border-neutral-100">
+                                  <Users className="size-3.5 text-neutral-400 shrink-0" aria-hidden />
+                                  <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400 whitespace-nowrap">筛选人选</span>
+                                  <div className="relative flex h-10 w-[136px] items-center gap-2">
+                                    <div
+                                      className="subagents-carousel-selector absolute left-0 top-1/2 size-10 -translate-y-1/2 rounded-full border-2 border-sky-400 bg-sky-100/50"
+                                      aria-hidden
+                                    />
+                                    {[1, 2, 3].map((i) => (
+                                      <div key={i} className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center" title="候选人">
+                                        <CartoonAvatar size={28} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="mb-2 text-sm text-neutral-700">
+                                文章很长，约有 66,000 字符。让我创建专门的子代理来并行处理翻译和图片生成任务。
+                              </p>
+                              <div
+                                data-module="workspace-subagents-plan"
+                                className="rounded-2xl border border-neutral-200/80 bg-white px-4 py-3 shadow-sm"
+                              >
+                                <div className="space-y-0">
+                                {[
+                                  { type: "assistant" as const, label: "创建助手", name: "translator" },
+                                  { type: "assistant" as const, label: "创建助手", name: "Storyboard Planner" },
+                                  { type: "assistant" as const, label: "创建助手", name: "Image Generator" },
+                                  { type: "task" as const, text: "派发翻译任务并完整传递文章" },
+                                ].map((item, i) => (
+                                  <div
+                                    key={i}
+                                    className={`flex cursor-pointer items-center gap-3 py-2.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-50 ${i < 3 ? "border-l-2 border-dashed border-neutral-200 pl-5 ml-2" : ""}`}
+                                  >
+                                    {item.type === "assistant" ? (
+                                      <>
+                                        <User className="size-4 shrink-0 text-neutral-400" />
+                                        <span className="text-neutral-600">{item.label}</span>
+                                        <Bot className="size-3.5 shrink-0 text-neutral-500" />
+                                        <span className="min-w-0 flex-1 font-medium text-neutral-800">{item.name}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Circle className="size-3.5 shrink-0 text-neutral-400" />
+                                        <span className="min-w-0 flex-1">{item.text}</span>
+                                      </>
+                                    )}
+                                    <ChevronRight className="size-4 shrink-0 text-neutral-400" />
+                                  </div>
+                                ))}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
               {mergedMessages.map((message, index) => {
                 const isThinkingCompleted = message.type === "thinking" && index < mergedMessages.length - 1;
 
@@ -552,48 +976,12 @@ export function WorkspacePage() {
                   </div>
                 );
               })}
-              {/* 等待中阶段提示：展示在合并对话下方 */}
-              {workingAgents.filter((wa) => wa.status === "waiting").map((wa) => (
-                <Card key={wa.agent.id} className="p-4 border-orange-200 bg-orange-50">
-                  <div className="flex items-start gap-3">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-orange-100">
-                      <Clock className="size-5 text-orange-600" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="font-medium text-sm text-neutral-900">
-                          {wa.agent.name} - 等待中
-                        </h4>
-                        <Badge variant="outline" className="bg-white text-xs">
-                          预计 5 分钟后
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-neutral-600 mb-3">
-                        等待前序任务完成后进行质量审核和优化建议
-                      </p>
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-neutral-700 mb-1">
-                          预计工作内容：
-                        </div>
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-2 text-xs text-neutral-600">
-                            <div className="size-1.5 rounded-full bg-orange-400" />
-                            <span>审核文案质量与准确性</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-neutral-600">
-                            <div className="size-1.5 rounded-full bg-orange-400" />
-                            <span>检查数据引用的正确性</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-neutral-600">
-                            <div className="size-1.5 rounded-full bg-orange-400" />
-                            <span>提供优化建议和修改意见</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              ))}
+              {/* 等待中阶段：堆叠效果，第一张为数据分析师完整卡片，后两张露一角；点击展开后两张 */}
+              {(() => {
+                const waitingList = workingAgents.filter((wa) => wa.status === "waiting");
+                if (waitingList.length === 0) return null;
+                return <WaitingStackCollapsible waitingList={waitingList} />;
+              })()}
             </div>
           )}
         </ScrollArea>
@@ -745,22 +1133,41 @@ export function WorkspacePage() {
         </div>
       </div>
 
-      {/* Right Sidebar - Output */}
-      <div className="w-96 border-l bg-white">
-        <Tabs defaultValue="artifacts" className="flex h-full flex-col">
-          <div className="border-b px-4">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="artifacts">
-                项目文件
-              </TabsTrigger>
-              <TabsTrigger value="html">
-                网页html
-              </TabsTrigger>
-              <TabsTrigger value="tasks">
-                任务卡片
-              </TabsTrigger>
-            </TabsList>
-          </div>
+      {/* 右侧边栏：可展开收起 */}
+      <div
+        data-module="workspace-right-sidebar"
+        className={`flex h-full flex-shrink-0 border-l bg-white transition-[width] duration-200 ${
+          rightSidebarOpen ? "w-96" : "w-12"
+        }`}
+      >
+        {rightSidebarOpen ? (
+          <>
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <Tabs defaultValue="artifacts" className="flex h-full flex-col">
+                <div className="flex items-center gap-1 border-b px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => setRightSidebarOpen(false)}
+                    className="flex size-8 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+                    title="收起侧边栏"
+                    aria-label="收起侧边栏"
+                  >
+                    <ChevronRight className="size-4" />
+                  </button>
+                  <div className="min-w-0 flex-1 py-0.5 pr-1">
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="artifacts">
+                        项目文件
+                      </TabsTrigger>
+                      <TabsTrigger value="html">
+                        网页html
+                      </TabsTrigger>
+                      <TabsTrigger value="tasks">
+                        任务卡片
+                      </TabsTrigger>
+                    </TabsList>
+                  </div>
+                </div>
 
           <TabsContent value="artifacts" className="flex-1 overflow-auto p-4 mt-0">
             <div className="mb-4">
@@ -1227,6 +1634,19 @@ export function WorkspacePage() {
             </div>
           </TabsContent>
         </Tabs>
+            </div>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setRightSidebarOpen(true)}
+            className="flex h-full w-12 flex-col items-center justify-center text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-700"
+            title="展开侧边栏"
+            aria-label="展开侧边栏"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+        )}
       </div>
 
     </div>
